@@ -1,3 +1,50 @@
+nextClassId = 0
+
+class Object(object):
+  def __init__(self, name, members, methods):
+    self.name = name
+    self.members = members
+    self.methods = methods
+
+class Reference(object):
+  def __init__(self, methods):
+    self.methods = methods
+
+def reference(**methods):
+  return Reference(methods)
+
+class Record(Reference):
+  pass
+
+def record(**childElements):
+  class RecordImpl(Record):
+    def __init__(self, methods):
+      Record.__init__(self, methods)
+
+  methods = {}
+  for name, childElement in childElements.iteritems():
+    wrappedMethodNames = []
+    for childMethodName, childMethod in childElement.methods.iteritems():
+      methodName = name + '_' + childMethodName
+      methods[methodName] = childMethod # TODO: Avoid collisions...
+      wrappedMethodNames.append(methodName)
+
+    elementType = type(childElement)
+    def getElement(self):
+      methods = dict(
+          ((name, self.methods[name]) for name in wrappedMethodNames))
+      return elementType(methods)
+
+    setattr(RecordImpl, name, getElement)
+
+  return RecordImpl(methods)
+
+class Socket(object):
+  def __init__(self, handler, listener):
+    self.handler = handler
+    self.listener = listener
+socket = Socket
+
 objectBuilder = None
 
 def object_(fn):
@@ -12,58 +59,60 @@ def object_(fn):
     def declareMember(self, tp):
       name = 'member' + str(self.nextMemberId)
       self.nextMemberId += 1
-      self.members.append([tp, name])
+      self.members.append((tp, name))
       return name
 
   objectBuilder = ObjectBuilder()
 
-  obj = fn()
+  global nextClassId
+  name = 'class' + str(nextClassId)
+  nextClassId += 1
+  ref = fn()
+
+  members = objectBuilder.members
 
   objectBuilder = oldObjectBuilder
 
-  return obj
-
-def emit(fn):
-  obj = object_(fn)
-
-  for attr_key in obj.__dict__:
-    emit_function(attr_key, getattr(obj, attr_key))
+  return Object(name, members, ref.methods)
 
 def member(tp):
   return objectBuilder.declareMember(tp)
 
 def instance(tp):
   mbr = member(tp)
-  class Instance(object):
-    pass
-
-  result = Instance()
-  def setValue(value):
-    emitAssignment(mbr, value)
-  result.set = setValue
-
-  return result
+  return reference(
+        set=Socket(lambda val: emitAssignment(mbr, val), lambda val: None),
+        get=Socket(lambda getter: None, lambda getter: None))
 
 def class_(fn):
-  return emit(fn)
+  obj = object_(fn)
 
-def pair(fst, snd):
-  class Pair(object):
-    pass
+  return emitClass(obj)
 
-  result = Pair()
+def emitClass(cls):
+  print 'class ' + cls.name + ' {'
 
-  oldFstSet = fst.set
-  def firstSet(val):
-    oldFstSet(val)
-    adsf
-  fst.set = firstSet
+  for tp, mbr in cls.members:
+    emitMember(tp, mbr)
 
-  snd.set = secondSet
+  print ''
 
-  result.objects = objects
+  methodWrappers = {}
+  for methodName, method in cls.methods.iteritems():
+    methodWrapper = emitMethod(methodName, method)
+    methodWrappers[methodName] = methodWrapper
 
-  return result
+  print '}'
+
+  return Reference(**methodWrappers)
+
+def emitMethod(methodName, method):
+  fn = method.handler
+  argNames = inspect.getargspec(fn)[0]
+  return methodWrapper
+
+def emitMember(tp, mbr):
+  print tp + ' ' + mbr + ';'
 
 class Types(object):
   string = 'string'
@@ -73,9 +122,9 @@ def string():
 
 @class_
 def customer():
-  return pair(
-      string(),
-      string())
+  return record(
+      firstName=string(),
+      secondName=string())
 
 @class_
 def model():
