@@ -6,46 +6,92 @@ class Object(object):
     self.members = members
     self.methods = methods
 
-class Record(Reference):
-  pass
+class Record(object):
+  def __init__(self, **elements):
+    self.__dict__.update(elements)
+
+  def emitMethods(self, prefix):
+    elements = self.__dict__
+    for name, element in elements.iteritems():
+      element.emitMethods(prefix + name + '_') # TODO: Avoid collisions
 
 def record(**childElements):
-  class RecordImpl(Record):
-    def __init__(self, methods):
-      Record.__init__(self, methods)
-
-  methods = {}
-  for name, childElement in childElements.iteritems():
-    wrappedMethodNames = []
-    for childMethodName, childMethod in childElement.methods.iteritems():
-      methodName = name + '_' + childMethodName
-      methods[methodName] = childMethod # TODO: Avoid collisions...
-      wrappedMethodNames.append(methodName)
-
-    elementType = type(childElement)
-    def getElement(self):
-      methods = dict(
-          ((name, self.methods[name]) for name in wrappedMethodNames))
-      return elementType(methods)
-
-    setattr(RecordImpl, name, getElement)
-
-  return RecordImpl(methods)
-
-class Method(object):
-  def __init__(self, type, args, fn):
-    self.type = type
-    self.args = args
-    self.fn = fn
+  return Record(**childElements)
 
 objectBuilder = None
 
-def object_(fn):
+def member(tp):
+  return objectBuilder.declareMember(tp)
+
+nextFrameId = 0
+def allocFrameId():
+  global nextFrameId
+  frameId = nextFrameId
+  nextFrameId += 1
+  return frameId
+
+parentFrames = {}
+def getParentFrame(frameId):
+  return parentFrames[frameId]
+
+def setParentFrame(frameId, val):
+  parentFrames[frameId] = val
+
+syncKey = 0
+
+def incSyncKey():
+  global syncKey
+  syncKey += 1
+
+class Property(object):
+  def __init__(self, tp, set, get):
+    self.tp = tp
+    self.parentFrameId = objectBuilder.frameId
+    self.set = set
+    self.get = get
+
+  def emitMethods(self, prefix):
+    setterName = prefix + 'set'
+    incSyncKey()
+    setParentFrame(
+    emitMethod(setterName, Types.void,
+        [('val', self.tp)], lambda: self.set('val'))
+    getterName = prefix + 'get'
+    emitMethod(getterName, self.tp, [],
+        lambda: self.get(lambda val: emitReturn(val)))
+    def makeWrapper():
+      return MethodProperty(tp, setterName, getterName)
+    return makeWrapper
+
+class Instance(Property):
+  def __init__(self, tp, mbr):
+    Property.__init__(self, tp, self.setValue, self.getValue)
+    self.mbr = mbr
+    self.syncKey = syncKey
+
+  def setValue(self, value):
+    if self.syncKey != syncKey:
+      self.syncKey = syncKey
+      emitAssignment(
+          lambda: emitMemberLookup(self.parentFrameId, self.mbr), value)
+
+  def getValue(self, target):
+    target(lambda: emitMemberLookup(self.parentFrameId, self.mbr))
+
+def instance(tp):
+  mbr = member(tp)
+  return Instance(tp, objectBuilder.frameId, mbr)
+
+def class_(fn):
+  return emitClass(fn)
+
+def emitClass(fn):
   global objectBuilder
   oldObjectBuilder = objectBuilder
 
   class ObjectBuilder(object):
-    def __init__(self):
+    def __init__(self, frameId):
+      self.frameId = frameId
       self.nextMemberId = 0
       self.members = []
 
@@ -55,7 +101,7 @@ def object_(fn):
       self.members.append((tp, name))
       return name
 
-  objectBuilder = ObjectBuilder()
+  objectBuilder = ObjectBuilder(allocFrameId())
 
   global nextClassId
   name = 'class' + str(nextClassId)
@@ -66,70 +112,36 @@ def object_(fn):
 
   objectBuilder = oldObjectBuilder
 
-  return Object(name, members, ref.methods)
-
-def member(tp):
-  return objectBuilder.declareMember(tp)
-
-syncKey = 0
-
-class Property(object):
-  def __init__(self, set, get):
-    self.set = set
-    self.get = get
-    self.mbr = mbr
-    methods = {}
-    methods['set'] = Method(Types.void, [(tp, 'val')] self.setValue)
-    methods['get'] = Method(Types.void, [(tp, 'val')] self.setValue) asdf
-    methods['get'] =  Method(self.getValue)
-    Reference.__init__(self, methods)
-    self.syncKey = syncKey
-
-  def setValue(self, value):
-    if self.syncKey != syncKey:
-      self.syncKey = syncKey
-      emitAssignment(self.mbr, val)
-
-  def getValue(self, target):
-    target(self.mbr)
-
-def instance(tp):
-  mbr = member(tp)
-  return Property(memberSetter(mbr), memberGetter(mbr))
-
-def class_(fn):
-  obj = object_(fn)
-
-  return emitClass(obj)
-
-def emitClass(cls):
-  print 'class ' + cls.name + ' {'
-
-  for tp, mbr in cls.members:
+  print 'class ' + name + ' {'
+  for tp, mbr in members:
     emitMember(tp, mbr)
-
   print ''
-
-  methodWrappers = {}
-  for methodName, method in cls.methods.iteritems():
-    methodWrapper = emitMethod(methodName, method)
-    methodWrappers[methodName] = methodWrapper
-
+  wrappedRef = emitMethods(ref)
   print '}'
 
-  return Reference(**methodWrappers)
+  return wrappedRef
 
-def emitMethod(methodName, method):
-  print (method.type + ' ' + methodName + '(' +
-      ', '.join((arg.type + ' ' + arg.name for arg in method.args))
+def emitAssignment(dest, val):
+  print dest() + ' = ' + val
+
+def emitMemberLookup(frameId, mbr):
+  print getParentFrame(frameId) + '.' + mbr
+
+def emitMethod(methodName, methodType, args, content):
+  print (methodType + ' ' + methodName + '(' +
+      ', '.join((argType + ' ' + argName for argName, argType in args))
       + ') {')
+  content()
   print '}'
-  return methodWrapper
+
+def emitMethods(ref):
+  ref.emitMethods('')
 
 def emitMember(tp, mbr):
   print tp + ' ' + mbr + ';'
 
 class Types(object):
+  void = 'void'
   string = 'string'
 
 def string():
