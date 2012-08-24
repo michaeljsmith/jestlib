@@ -6,13 +6,6 @@ class Object(object):
     self.members = members
     self.methods = methods
 
-class Reference(object):
-  def __init__(self, methods):
-    self.methods = methods
-
-def reference(**methods):
-  return Reference(methods)
-
 class Record(Reference):
   pass
 
@@ -39,11 +32,11 @@ def record(**childElements):
 
   return RecordImpl(methods)
 
-class Socket(object):
-  def __init__(self, handler, listener):
-    self.handler = handler
-    self.listener = listener
-socket = Socket
+class Method(object):
+  def __init__(self, type, args, fn):
+    self.type = type
+    self.args = args
+    self.fn = fn
 
 objectBuilder = None
 
@@ -78,11 +71,31 @@ def object_(fn):
 def member(tp):
   return objectBuilder.declareMember(tp)
 
+syncKey = 0
+
+class Property(object):
+  def __init__(self, set, get):
+    self.set = set
+    self.get = get
+    self.mbr = mbr
+    methods = {}
+    methods['set'] = Method(Types.void, [(tp, 'val')] self.setValue)
+    methods['get'] = Method(Types.void, [(tp, 'val')] self.setValue) asdf
+    methods['get'] =  Method(self.getValue)
+    Reference.__init__(self, methods)
+    self.syncKey = syncKey
+
+  def setValue(self, value):
+    if self.syncKey != syncKey:
+      self.syncKey = syncKey
+      emitAssignment(self.mbr, val)
+
+  def getValue(self, target):
+    target(self.mbr)
+
 def instance(tp):
   mbr = member(tp)
-  return reference(
-        set=Socket(lambda val: emitAssignment(mbr, val), lambda val: None),
-        get=Socket(lambda getter: None, lambda getter: None))
+  return Property(memberSetter(mbr), memberGetter(mbr))
 
 def class_(fn):
   obj = object_(fn)
@@ -107,8 +120,10 @@ def emitClass(cls):
   return Reference(**methodWrappers)
 
 def emitMethod(methodName, method):
-  fn = method.handler
-  argNames = inspect.getargspec(fn)[0]
+  print (method.type + ' ' + methodName + '(' +
+      ', '.join((arg.type + ' ' + arg.name for arg in method.args))
+      + ') {')
+  print '}'
   return methodWrapper
 
 def emitMember(tp, mbr):
