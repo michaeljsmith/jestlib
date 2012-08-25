@@ -1,158 +1,122 @@
 nextClassId = 0
 
-class Object(object):
-  def __init__(self, name, members, methods):
-    self.name = name
-    self.members = members
-    self.methods = methods
+def allocClassName():
+  global nextClassId
+  className = 'class' + str(nextClassId)
+  nextClassId += 1
+  return className
 
-class Record(object):
-  def __init__(self, **elements):
-    self.__dict__.update(elements)
+outputtingClass = False
 
-  def emitMethods(self, prefix):
-    elements = self.__dict__
-    for name, element in elements.iteritems():
-      element.emitMethods(prefix + name + '_') # TODO: Avoid collisions
+nextMemberId = 0
 
-def record(**childElements):
-  return Record(**childElements)
+def clearMemberNames():
+  global nextMemberId
 
-objectBuilder = None
+def allocMemberName():
+  global nextMemberId
+  memberName = 'member' + str(nextMemberId)
+  nextMemberId += 1
+  return memberName
 
-def member(tp):
-  return objectBuilder.declareMember(tp)
+nextMethodId = 0
 
-nextFrameId = 0
-def allocFrameId():
-  global nextFrameId
-  frameId = nextFrameId
-  nextFrameId += 1
-  return frameId
+def clearMethodNames():
+  global nextMethodId
 
-parentFrames = {}
-def getParentFrame(frameId):
-  return parentFrames[frameId]
-
-def setParentFrame(frameId, val):
-  parentFrames[frameId] = val
-
-syncKey = 0
-
-def incSyncKey():
-  global syncKey
-  syncKey += 1
-
-class Property(object):
-  def __init__(self, tp, set, get):
-    self.tp = tp
-    self.parentFrameId = objectBuilder.frameId
-    self.set = set
-    self.get = get
-
-  def emitMethods(self, prefix):
-    setterName = prefix + 'set'
-    incSyncKey()
-    setParentFrame(
-    emitMethod(setterName, Types.void,
-        [('val', self.tp)], lambda: self.set('val'))
-    getterName = prefix + 'get'
-    emitMethod(getterName, self.tp, [],
-        lambda: self.get(lambda val: emitReturn(val)))
-    def makeWrapper():
-      return MethodProperty(tp, setterName, getterName)
-    return makeWrapper
-
-class Instance(Property):
-  def __init__(self, tp, mbr):
-    Property.__init__(self, tp, self.setValue, self.getValue)
-    self.mbr = mbr
-    self.syncKey = syncKey
-
-  def setValue(self, value):
-    if self.syncKey != syncKey:
-      self.syncKey = syncKey
-      emitAssignment(
-          lambda: emitMemberLookup(self.parentFrameId, self.mbr), value)
-
-  def getValue(self, target):
-    target(lambda: emitMemberLookup(self.parentFrameId, self.mbr))
-
-def instance(tp):
-  mbr = member(tp)
-  return Instance(tp, objectBuilder.frameId, mbr)
+def allocMethodName():
+  global nextMethodId
+  methodName = 'method' + str(nextMethodId)
+  nextMethodId += 1
+  return methodName
 
 def class_(fn):
-  return emitClass(fn)
+  global outputtingClass
+  if outputtingClass: raise Exception()
 
-def emitClass(fn):
-  global objectBuilder
-  oldObjectBuilder = objectBuilder
+  className = allocClassName()
 
-  class ObjectBuilder(object):
-    def __init__(self, frameId):
-      self.frameId = frameId
-      self.nextMemberId = 0
-      self.members = []
+  class Object(object):
+    name = className
+    def __init__(self):
+      self.instance = declareMember(Object)
 
-    def declareMember(self, tp):
-      name = 'member' + str(self.nextMemberId)
-      self.nextMemberId += 1
-      self.members.append((tp, name))
-      return name
+  clearMemberNames()
+  clearMethodNames()
+  outputtingClass = True
 
-  objectBuilder = ObjectBuilder(allocFrameId())
+  print 'class ' + className + ' {'
+  fn(Object)
+  print '};'
 
-  global nextClassId
-  name = 'class' + str(nextClassId)
-  nextClassId += 1
-  ref = fn()
+  outputtingClass = False
 
-  members = objectBuilder.members
+  return Object
 
-  objectBuilder = oldObjectBuilder
+def declareMember(type):
+  name = allocMemberName();
+  print type.name + ' ' + name + ';'
+  return name
 
-  print 'class ' + name + ' {'
-  for tp, mbr in members:
-    emitMember(tp, mbr)
+def assign(instanceName, value):
+  print instanceName + ' = ' + value + ';'
+
+def callGetMethod(getName, target):
+  target(lambda: callMethod(getName, []))
+
+def declareMethod(type, args, content):
+  methodName = allocMethodName()
+  print (type.name + ' ' + methodName + '(' + ', '.join(
+    type.name + ' x' + str(idx) for idx, type in enumerate(args)) + ') {')
+  content(*['x' + str(idx) for idx, x in enumerate(args)])
+  print '}'
   print ''
-  wrappedRef = emitMethods(ref)
-  print '}'
+  return methodName
 
-  return wrappedRef
+def property_(var):
+  setName = declareMethod(Void, [type(var)], lambda val: var.set(val))
+  getName = declareMethod(var.type, [],
+      lambda: var.get(lambda val: return_(val)))
 
-def emitAssignment(dest, val):
-  print dest() + ' = ' + val
+  class Property(object):
+    def __init__(self, setName, getName):
+      self.setName = setName
+      self.getName = getName
 
-def emitMemberLookup(frameId, mbr):
-  print getParentFrame(frameId) + '.' + mbr
+    def set(self, value):
+      callMethod(self.setName, [value])
 
-def emitMethod(methodName, methodType, args, content):
-  print (methodType + ' ' + methodName + '(' +
-      ', '.join((argType + ' ' + argName for argName, argType in args))
-      + ') {')
-  content()
-  print '}'
+    def get(self, target):
+      callGetMethod(self.getName, target)
 
-def emitMethods(ref):
-  ref.emitMethods('')
+  def getProperty(self):
+    return Property(setName, getName)
+  return property(getProperty)
 
-def emitMember(tp, mbr):
-  print tp + ' ' + mbr + ';'
+class Void(object):
+  name = 'void'
 
-class Types(object):
-  void = 'void'
-  string = 'string'
+  def __init__(self):
+    raise Exception()
 
-def string():
-  return instance(Types.string)
+class Primitive(object):
+  def __init__(self):
+    if type(self) is Primitive: raise Exception()
+
+    self.instanceName = declareMember(type(self))
+
+  def set(self, value):
+    assign(self.instanceName, value)
+
+class String(Primitive):
+  name = 'string'
 
 @class_
-def customer():
-  return record(
-      firstName=string(),
-      secondName=string())
+def Customer(cls):
+  cls.firstName = property_(String())
+  cls.secondName = property_(String())
 
 @class_
-def model():
-  return vector(customer)
+def Model(cls):
+  cls.draw = method(Void, [Customer], lambda canvas: printToCanvas(canvas))
+  cls.customers = property_(Vector(Customer))
