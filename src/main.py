@@ -1,6 +1,10 @@
 def singleton(cls):
   return cls()
 
+class Code(object):
+  def __init__(emit):
+    self.emit = emit
+
 nextClassId = 0
 
 def allocClassName():
@@ -73,22 +77,38 @@ def function(type, params):
   def decorate(fn):
     functionName = allocFunctionName()
 
-    namedParams = [('x' + str(i), type) for i, type in enumerate(params)]
+    namedParams = [('x' + str(i), argType) for i, argType in enumerate(params)]
 
     with outputtingDefLock:
       print (type.name + ' ' + functionName + '(' + ', '.join(
-        type.name + ' ' + name for name, type in namedParams) + ') {')
-      fn(name for name, type in namedParams)
+        argType.name + ' ' + name for name, argType in namedParams) + ') {')
+      fn(name for name, argType in namedParams)
       print '}'
       print ''
 
     def callFunctionImpl(*args):
       checkArgs(args, params)
-      callFunction(functionName, args)
+      return Expression(type, lambda: callFunction(functionName, args))
 
     return callFunctionImpl
 
   return decorate
+
+def foreignVar(name, type):
+  with outputtingDefLock:
+    print 'extern ' + type.name + ' ' + name + ';'
+
+def foreignFunc(name, type, params):
+  with outputtingDefLock:
+    print ('extern ' + type.name + ' ' + name + '(' + ', '.join(
+      type.name for type in params) + ');')
+
+  def callFunctionImpl(*args):
+    checkArgs(args, params)
+    return Expression(type, lambda: callFunction(functionName, args))
+
+  return callFunctionImpl
+
 
 def class_(fn):
   className = allocClassName()
@@ -107,6 +127,20 @@ def class_(fn):
 
   return Object
 
+def method(type, params):
+  def decorate(fn):
+    name = methodDeclaration(type, params, content)
+
+    if type is Void:
+      def methodImpl(self, *args):
+        checkArgs(args, params)
+        return Expression(type,
+            lambda: callMethod(self, name, args))
+    else:
+      raise Exception()
+
+    return methodImpl
+
 def memberDeclaration(type):
   name = allocMemberName();
   print type.name + ' ' + name + ';'
@@ -114,9 +148,6 @@ def memberDeclaration(type):
 
 def assign(instanceName, value):
   print instanceName + ' = ' + value + ';'
-
-def callGetMethod(self, getName, target):
-  target(lambda: callMethod(self, getName, []))
 
 def methodDeclaration(type, args, content):
   methodName = allocMethodName()
@@ -135,18 +166,6 @@ def checkArgs(args, params):
   for arg, param in zip(args, params):
     if not (arg.type is param): raise Exception()
 
-def method(type, params, content):
-  name = methodDeclaration(type, params, content)
-
-  if type is Void:
-    def methodImpl(self, *args):
-      checkArgs(args, params)
-      callMethod(self, name, args)
-  else:
-    raise Exception()
-
-  return methodImpl
-
 def property_(var):
   setName = methodDeclaration(Void, [type(var)], lambda val: var.set(val))
   getName = methodDeclaration(var.type, [],
@@ -161,7 +180,7 @@ def property_(var):
       callMethod(self, self.setName, [value])
 
     def get(self, target):
-      callGetMethod(self, self.getName, target)
+      target(lambda: callMethod(self, self.getName, []))
 
   def getProperty(self):
     return Property(setName, getName)
@@ -172,6 +191,14 @@ class Void(object):
 
   def __init__(self):
     raise Exception()
+
+class Expression(object):
+  def __init__(self, type, expr):
+    self.type = type
+    self.expr = expr
+
+  def execute(self):
+    return self.expr()
 
 class Primitive(object):
   def __init__(self):
@@ -189,22 +216,45 @@ class Primitive(object):
   def type(self):
     return type(self)
 
+def Pointer(type):
+  class PointerImpl(Primitive):
+    name = type.name + '*'
+  return PointerImpl
+
+class Char(Primitive):
+  name = 'char'
+
 class String(Primitive):
   name = 'string'
+
+class FILE(Primitive):
+  name = 'FILE'
+
+def do(expr):
+  expr()
+  print ';'
 
 @class_
 def Customer(cls):
   cls.firstName = property_(String())
   cls.secondName = property_(String())
 
+stdout = foreignVar('stdout', Pointer(FILE))
+fputs = foreignFunc('fputs', Void, [Pointer(Char)])
+
 @function(Void, [Customer])
 def printToCanvas(customer):
-  fputs(stdout, customer.firstName)
-  fputs(stdout, " ")
-  fputs(stdout, customer.secondName)
+  do(fputs(stdout, customer.firstName))
+  do(fputs(stdout, ' '))
+  do(fputs(stdout, customer.secondName))
+  do(fputs(stdout, '\n'))
 
 @class_
 def Model(cls):
-  cls.draw = method(Void, [Customer], lambda customer:
-    printToCanvas(customer))
+
+  @method(Void, [Customer])
+  def draw(customer):
+    printToCanvas(customer)
+  cls.draw = draw
+
   cls.customers = property_(Vector(Customer))
