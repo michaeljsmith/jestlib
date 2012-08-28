@@ -82,9 +82,9 @@ def function(type, params):
     with outputtingDefLock:
       print(type.name + ' ' + functionName + '(' + ', '.join(
         argType.name + ' ' + name for name, argType in namedParams) + ') {\n')
-      def printName():
-        print(name, end='')
-      fn(*[instanceReference(argType, printName) for name, argType in namedParams])
+      def getArgInstance(target):
+        target(lambda: print(name, end=''))
+      fn(*[instanceReference(argType, getArgInstance) for name, argType in namedParams])
       print('}')
       print('')
 
@@ -100,9 +100,9 @@ def foreignVar(name, type):
   with outputtingDefLock:
     print('extern ' + type.name + ' ' + name + ';')
 
-  def printName():
-    print(name, end='')
-  return Expression(type, printName)
+  def getInstance(target):
+    target(lambda: print(name, end=''))
+  return type.referInstance(getInstance)
 
 def foreignFunc(name, type, params):
   with outputtingDefLock:
@@ -111,10 +111,9 @@ def foreignFunc(name, type, params):
 
   def callFunctionImpl(*args):
     checkArgs(args, params)
-    return Expression(type, lambda: callFunction(name, args))
+    return type.referInstance(lambda: callFunction(name, args))
 
   return callFunctionImpl
-
 
 def class_(fn):
   className = allocClassName()
@@ -124,8 +123,14 @@ def class_(fn):
     def __init__(self, getInstance):
       self.getInstance = getInstance
 
+    def evaluate(self):
+      self.getInstance(lambda v: v())
+
     @classmethod
     def referInstance(cls, getInstance):
+      # DEBUG
+      getInstance(lambda x: None)
+
       return cls(getInstance)
 
   with memberNamesScope, methodNamesScope, outputtingDefLock:
@@ -154,23 +159,23 @@ def method(type, params):
 def memberDeclaration(type):
   name = allocMemberName();
   print(type.name + ' ' + name + ';')
-  def printName():
-    print(name, end='')
-  return printName
+  def getInstance(target):
+    target(lambda: print(name, end=''))
+  return getInstance
 
 def assign(getInstance, value):
-  getInstance()
+  getInstance(lambda v: v())
   print(' = ' + value + ';')
 
 def callFunction(name, args):
   print(name + '(', end='')
   for i, arg in enumerate(args):
     if i > 0: print(', ', end='')
-    arg.execute()
+    arg.evaluate()
   print(')', end='')
 
 def callMethod(instance, name, args):
-  instance.getInstance()
+  instance.evaluate()
   print('.', end='')
   callFunction(name, args)
 
@@ -201,28 +206,34 @@ def property_(var):
       lambda: var.get(lambda val: return_(val)))
 
   def getProperty(self):
+    def getInstance(target):
+      target(lambda: callMethod(self, getName, []))
+
     def set(value):
       callMethod(self, setName, [value])
 
-    def get(target):
-      target(lambda: callMethod(self, getName, []))
-
-    return var.type(set, get)
+    return var.type(getInstance, set)
   return property(getProperty)
 
 class Void(object):
   name = 'void'
 
-  def __init__(self):
-    raise Exception()
+  def __init__(self, getInstance):
+    if type(self) is Primitive: raise Exception()
 
-class Expression(object):
-  def __init__(self, type, expr):
-    self.type = type
-    self.expr = expr
+    self.getInstance = getInstance
+    self.set = set
 
-  def execute(self):
-    return self.expr()
+  def evaluate(self):
+    self.getInstance()
+
+  @property
+  def type(self):
+    return type(self)
+
+  @classmethod
+  def referInstance(cls, getInstance):
+    return cls(getInstance)
 
 def instance(type):
   getInstance = memberDeclaration(type)
@@ -232,25 +243,28 @@ def instanceReference(type, getInstance):
   return type.referInstance(getInstance)
 
 class Primitive(object):
-  def __init__(self, set, get):
+  def __init__(self, getInstance, set):
     if type(self) is Primitive: raise Exception()
 
+    self.getInstance = getInstance
     self.set = set
-    self.get = get
+
+  def evaluate(self):
+    self.getInstance(lambda v: v())
 
   @property
   def type(self):
     return type(self)
+
+  def get(self, target):
+    self.getInstance(target)
 
   @classmethod
   def referInstance(cls, getInstance):
     def set(value):
       assign(getInstance, value)
 
-    def get(target):
-      target(getInstance)
-
-    return cls(set, get)
+    return cls(getInstance, set)
 
 def Pointer(type):
   try:
@@ -274,16 +288,23 @@ class String(Primitive):
   name = 'string'
 
   def c_str(self):
-    def handleInstance(string):
-      string()
-      print('.c_str()', end='')
-    return Expression(Pointer(Char), lambda: self.get(handleInstance))
+    def getCStr(target):
+      def addCall(instance):
+        instance()
+        print('.c_str()', end='')
+      self.getInstance(addCall)
+    return Pointer(Char).referInstance(getCStr)
+
+def stringLiteral(text):
+  def getInstance(target):
+    target(lambda: print('string("' + text + '")', end=''))
+  return String.referInstance(getInstance)
 
 class FILE(Primitive):
   name = 'FILE'
 
 def do(expr):
-  expr.execute()
+  expr.evaluate()
   print(';')
 
 stdout = foreignVar('stdout', Pointer(FILE))
@@ -297,9 +318,9 @@ def Customer(cls):
 @function(Void, [Customer])
 def printToCanvas(customer):
   do(fputs(stdout, customer.firstName.c_str()))
-  do(fputs(stdout, ' '))
-  do(fputs(stdout, customer.secondName))
-  do(fputs(stdout, '\n'))
+  do(fputs(stdout, stringLiteral(' ').c_str()))
+  do(fputs(stdout, customer.secondName.c_str()))
+  do(fputs(stdout, stringLiteral('\n').c_str()))
 
 @class_
 def Model(cls):
