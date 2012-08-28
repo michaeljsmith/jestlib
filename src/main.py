@@ -1,12 +1,11 @@
+from __future__ import print_function
+
 def singleton(cls):
   return cls()
 
-class Code(object):
-  def __init__(emit):
-    self.emit = emit
-
 nextClassId = 0
 
+# TODO: Ensure no collisions with foreign symbols.
 def allocClassName():
   global nextClassId
   className = 'class' + str(nextClassId)
@@ -77,14 +76,17 @@ def function(type, params):
   def decorate(fn):
     functionName = allocFunctionName()
 
-    namedParams = [('x' + str(i), argType) for i, argType in enumerate(params)]
+    namedParams = [('x' + str(i), argType)
+        for i, argType in enumerate(params)]
 
     with outputtingDefLock:
-      print (type.name + ' ' + functionName + '(' + ', '.join(
-        argType.name + ' ' + name for name, argType in namedParams) + ') {')
-      fn(name for name, argType in namedParams)
-      print '}'
-      print ''
+      print(type.name + ' ' + functionName + '(' + ', '.join(
+        argType.name + ' ' + name for name, argType in namedParams) + ') {\n')
+      def printName():
+        print(name, end='')
+      fn(*[instanceReference(argType, printName) for name, argType in namedParams])
+      print('}')
+      print('')
 
     def callFunctionImpl(*args):
       checkArgs(args, params)
@@ -96,16 +98,20 @@ def function(type, params):
 
 def foreignVar(name, type):
   with outputtingDefLock:
-    print 'extern ' + type.name + ' ' + name + ';'
+    print('extern ' + type.name + ' ' + name + ';')
+
+  def printName():
+    print(name, end='')
+  return Expression(type, printName)
 
 def foreignFunc(name, type, params):
   with outputtingDefLock:
-    print ('extern ' + type.name + ' ' + name + '(' + ', '.join(
+    print('extern ' + type.name + ' ' + name + '(' + ', '.join(
       type.name for type in params) + ');')
 
   def callFunctionImpl(*args):
     checkArgs(args, params)
-    return Expression(type, lambda: callFunction(functionName, args))
+    return Expression(type, lambda: callFunction(name, args))
 
   return callFunctionImpl
 
@@ -113,19 +119,23 @@ def foreignFunc(name, type, params):
 def class_(fn):
   className = allocClassName()
 
-  class Object(object):
+  class ClassInstance(object):
     name = className
-    def __init__(self):
-      self.instance = memberDeclaration(Object)
+    def __init__(self, getInstance):
+      self.getInstance = getInstance
+
+    @classmethod
+    def referInstance(cls, getInstance):
+      return cls(getInstance)
 
   with memberNamesScope, methodNamesScope, outputtingDefLock:
 
-    print 'class ' + className + ' {'
-    fn(Object)
-    print '};'
-    print ''
+    print('class ' + className + ' {')
+    fn(ClassInstance)
+    print('};')
+    print('')
 
-  return Object
+  return ClassInstance
 
 def method(type, params):
   def decorate(fn):
@@ -143,23 +153,40 @@ def method(type, params):
 
 def memberDeclaration(type):
   name = allocMemberName();
-  print type.name + ' ' + name + ';'
-  return name
+  print(type.name + ' ' + name + ';')
+  def printName():
+    print(name, end='')
+  return printName
 
-def assign(instanceName, value):
-  print instanceName + ' = ' + value + ';'
+def assign(getInstance, value):
+  getInstance()
+  print(' = ' + value + ';')
+
+def callFunction(name, args):
+  print(name + '(', end='')
+  for i, arg in enumerate(args):
+    if i > 0: print(', ', end='')
+    arg.execute()
+  print(')', end='')
+
+def callMethod(instance, name, args):
+  instance.getInstance()
+  print('.', end='')
+  callFunction(name, args)
 
 def methodDeclaration(type, args, content):
   methodName = allocMethodName()
-  print (type.name + ' ' + methodName + '(' + ', '.join(
+  print(type.name + ' ' + methodName + '(' + ', '.join(
     type.name + ' x' + str(idx) for idx, type in enumerate(args)) + ') {')
   content(*['x' + str(idx) for idx, x in enumerate(args)])
-  print '}'
-  print ''
+  print('}')
+  print('')
   return methodName
 
 def return_(value):
-  print 'return ' + value + ';'
+  print('return ', end='')
+  value()
+  print(';')
 
 def checkArgs(args, params):
   if len(args) != len(params): raise Exception()
@@ -167,23 +194,20 @@ def checkArgs(args, params):
     if not (arg.type is param): raise Exception()
 
 def property_(var):
-  setName = methodDeclaration(Void, [type(var)], lambda val: var.set(val))
+  if not isinstance(var, Primitive): raise Exception()
+
+  setName = methodDeclaration(Void, [var.type], lambda val: var.set(val))
   getName = methodDeclaration(var.type, [],
       lambda: var.get(lambda val: return_(val)))
 
-  class Property(object):
-    def __init__(self, setName, getName):
-      self.setName = setName
-      self.getName = getName
-
-    def set(self, value):
-      callMethod(self, self.setName, [value])
-
-    def get(self, target):
-      target(lambda: callMethod(self, self.getName, []))
-
   def getProperty(self):
-    return Property(setName, getName)
+    def set(value):
+      callMethod(self, setName, [value])
+
+    def get(target):
+      target(lambda: callMethod(self, getName, []))
+
+    return var.type(set, get)
   return property(getProperty)
 
 class Void(object):
@@ -200,26 +224,48 @@ class Expression(object):
   def execute(self):
     return self.expr()
 
+def instance(type):
+  getInstance = memberDeclaration(type)
+  return instanceReference(type, getInstance)
+
+def instanceReference(type, getInstance):
+  return type.referInstance(getInstance)
+
 class Primitive(object):
-  def __init__(self):
+  def __init__(self, set, get):
     if type(self) is Primitive: raise Exception()
 
-    self.instanceName = memberDeclaration(self.type)
-
-  def set(self, value):
-    assign(self.instanceName, value)
-
-  def get(self, target):
-    target(self.instanceName)
+    self.set = set
+    self.get = get
 
   @property
   def type(self):
     return type(self)
 
+  @classmethod
+  def referInstance(cls, getInstance):
+    def set(value):
+      assign(getInstance, value)
+
+    def get(target):
+      target(getInstance)
+
+    return cls(set, get)
+
 def Pointer(type):
-  class PointerImpl(Primitive):
-    name = type.name + '*'
-  return PointerImpl
+  try:
+    instances = Pointer.instances
+  except AttributeError:
+    instances = {}
+    Pointer.instances = instances
+
+  try:
+    return instances[type]
+  except KeyError:
+    class PointerImpl(Primitive):
+      name = type.name + '*'
+    instances[type] = PointerImpl
+    return PointerImpl
 
 class Char(Primitive):
   name = 'char'
@@ -227,24 +273,30 @@ class Char(Primitive):
 class String(Primitive):
   name = 'string'
 
+  def c_str(self):
+    def handleInstance(string):
+      string()
+      print('.c_str()', end='')
+    return Expression(Pointer(Char), lambda: self.get(handleInstance))
+
 class FILE(Primitive):
   name = 'FILE'
 
 def do(expr):
-  expr()
-  print ';'
+  expr.execute()
+  print(';')
+
+stdout = foreignVar('stdout', Pointer(FILE))
+fputs = foreignFunc('fputs', Void, [Pointer(FILE), Pointer(Char)])
 
 @class_
 def Customer(cls):
-  cls.firstName = property_(String())
-  cls.secondName = property_(String())
-
-stdout = foreignVar('stdout', Pointer(FILE))
-fputs = foreignFunc('fputs', Void, [Pointer(Char)])
+  cls.firstName = property_(instance(String))
+  cls.secondName = property_(instance(String))
 
 @function(Void, [Customer])
 def printToCanvas(customer):
-  do(fputs(stdout, customer.firstName))
+  do(fputs(stdout, customer.firstName.c_str()))
   do(fputs(stdout, ' '))
   do(fputs(stdout, customer.secondName))
   do(fputs(stdout, '\n'))
