@@ -74,11 +74,11 @@ class outputtingDefLock(object):
 
 def function(type, params):
   def decorate(fn):
-    functionName = functionDeclaration(type, params, fn)
+    name = functionDeclaration(type, params, fn)
 
     def callFunctionImpl(*args):
       checkArgs(args, params)
-      return Expression(type, lambda: callFunction(functionName, args))
+      return type.referInstance(lambda: callFunction(name, args))
 
     return callFunctionImpl
 
@@ -110,6 +110,10 @@ def class_(fn):
     name = className
     def __init__(self, getInstance):
       self.getInstance = getInstance
+
+    @property
+    def type(self):
+      return type(self)
 
     def evaluate(self):
       self.getInstance(lambda v: v())
@@ -155,7 +159,9 @@ def memberDeclaration(type):
 
 def assign(getInstance, value):
   getInstance(lambda v: v())
-  print(' = ' + value + ';')
+  print(' = ', end='')
+  value()
+  print(';')
 
 def callFunction(name, args):
   print(name + '(', end='')
@@ -176,10 +182,9 @@ def declareFunction(name, type, params, content):
   with outputtingDefLock:
     print(type.name + ' ' + name + '(' + ', '.join(
       argType.name + ' ' + name for name, argType in namedParams) + ') {\n')
-    def getArgInstance(target):
-      target(lambda: print(name, end=''))
-    content(*[instanceReference(argType, getArgInstance)
-      for name, argType in namedParams])
+    content(*[instanceReference(argType,
+      lambda target: target(lambda: print(argName, end='')))
+      for argName, argType in namedParams])
     print('}')
     print('')
 
@@ -332,7 +337,7 @@ def Model(cls):
 
   @method(Void, [Customer])
   def draw(customer):
-    printToCanvas(customer)
+    do(printToCanvas(customer))
   cls.draw = draw
 
   cls.customers = property_(Vector(Customer))
