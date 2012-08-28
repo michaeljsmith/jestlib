@@ -74,19 +74,7 @@ class outputtingDefLock(object):
 
 def function(type, params):
   def decorate(fn):
-    functionName = allocFunctionName()
-
-    namedParams = [('x' + str(i), argType)
-        for i, argType in enumerate(params)]
-
-    with outputtingDefLock:
-      print(type.name + ' ' + functionName + '(' + ', '.join(
-        argType.name + ' ' + name for name, argType in namedParams) + ') {\n')
-      def getArgInstance(target):
-        target(lambda: print(name, end=''))
-      fn(*[instanceReference(argType, getArgInstance) for name, argType in namedParams])
-      print('}')
-      print('')
+    functionName = functionDeclaration(type, params, fn)
 
     def callFunctionImpl(*args):
       checkArgs(args, params)
@@ -143,7 +131,7 @@ def class_(fn):
   return ClassInstance
 
 def method(type, params):
-  def decorate(fn):
+  def decorate(content):
     name = methodDeclaration(type, params, content)
 
     if type is Void:
@@ -155,6 +143,8 @@ def method(type, params):
       raise Exception()
 
     return methodImpl
+
+  return decorate
 
 def memberDeclaration(type):
   name = allocMemberName();
@@ -179,14 +169,29 @@ def callMethod(instance, name, args):
   print('.', end='')
   callFunction(name, args)
 
-def methodDeclaration(type, args, content):
+def declareFunction(name, type, params, content):
+  namedParams = [('x' + str(i), argType)
+      for i, argType in enumerate(params)]
+
+  with outputtingDefLock:
+    print(type.name + ' ' + name + '(' + ', '.join(
+      argType.name + ' ' + name for name, argType in namedParams) + ') {\n')
+    def getArgInstance(target):
+      target(lambda: print(name, end=''))
+    content(*[instanceReference(argType, getArgInstance)
+      for name, argType in namedParams])
+    print('}')
+    print('')
+
+  return name
+
+def methodDeclaration(type, params, content):
   methodName = allocMethodName()
-  print(type.name + ' ' + methodName + '(' + ', '.join(
-    type.name + ' x' + str(idx) for idx, type in enumerate(args)) + ') {')
-  content(*['x' + str(idx) for idx, x in enumerate(args)])
-  print('}')
-  print('')
-  return methodName
+  return declareFunction(methodName, type, params, content)
+
+def functionDeclaration(type, params, content):
+  functionName = allocFunctionName()
+  return declareFunction(functionName, type, params, content)
 
 def return_(value):
   print('return ', end='')
@@ -262,7 +267,7 @@ class Primitive(object):
   @classmethod
   def referInstance(cls, getInstance):
     def set(value):
-      assign(getInstance, value)
+      assign(getInstance, value.evaluate)
 
     return cls(getInstance, set)
 
@@ -320,7 +325,7 @@ def printToCanvas(customer):
   do(fputs(stdout, customer.firstName.c_str()))
   do(fputs(stdout, stringLiteral(' ').c_str()))
   do(fputs(stdout, customer.secondName.c_str()))
-  do(fputs(stdout, stringLiteral('\n').c_str()))
+  do(fputs(stdout, stringLiteral('\\n').c_str()))
 
 @class_
 def Model(cls):
