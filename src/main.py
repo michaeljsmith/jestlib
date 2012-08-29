@@ -88,9 +88,7 @@ def foreignVar(name, type):
   with outputtingDefLock:
     print('extern ' + type.name + ' ' + name + ';')
 
-  def getInstance(target):
-    target(lambda: print(name, end=''))
-  return type.referInstance(getInstance)
+  return type.referVar(name)
 
 def foreignFunc(name, type, params):
   with outputtingDefLock:
@@ -108,21 +106,16 @@ def class_(fn):
 
   class ClassInstance(object):
     name = className
-    def __init__(self, getInstance):
-      self.getInstance = getInstance
+    def __init__(self, name):
+      if not isinstance(name, str): raise Exception()
+      self.name = name
 
     @property
     def type(self):
       return type(self)
 
-    def evaluate(self):
-      self.getInstance(lambda v: v())
-
     @classmethod
-    def referInstance(cls, getInstance):
-      # DEBUG
-      getInstance(lambda x: None)
-
+    def referVar(cls, name):
       return cls(getInstance)
 
   with memberNamesScope, methodNamesScope, outputtingDefLock:
@@ -228,39 +221,35 @@ def property_(var):
 class Void(object):
   name = 'void'
 
-  def __init__(self, getInstance):
+  def __init__(self, name):
+    if not isinstance(name, str): raise Exception()
     if type(self) is Primitive: raise Exception()
 
-    self.getInstance = getInstance
+    self.name = name
     self.set = set
-
-  def evaluate(self):
-    self.getInstance()
 
   @property
   def type(self):
     return type(self)
 
   @classmethod
-  def referInstance(cls, getInstance):
-    return cls(getInstance)
+  def referInstance(cls, name):
+    return cls(name)
 
 def instance(type):
   getInstance = memberDeclaration(type)
   return instanceReference(type, getInstance)
 
-def instanceReference(type, getInstance):
-  return type.referInstance(getInstance)
+def varReference(type, name):
+  return type.referVar(name)
 
 class Primitive(object):
-  def __init__(self, getInstance, set):
+  def __init__(self, name, set):
+    if not isinstance(name, str): raise Exception()
     if type(self) is Primitive: raise Exception()
 
-    self.getInstance = getInstance
+    self.name = name
     self.set = set
-
-  def evaluate(self):
-    self.getInstance(lambda v: v())
 
   @property
   def type(self):
@@ -270,9 +259,9 @@ class Primitive(object):
     self.getInstance(target)
 
   @classmethod
-  def referInstance(cls, getInstance):
+  def referVar(cls, name):
     def set(value):
-      assign(getInstance, value.evaluate)
+      assign(name, value.evaluate)
 
     return cls(getInstance, set)
 
@@ -312,10 +301,6 @@ def stringLiteral(text):
 
 class FILE(Primitive):
   name = 'FILE'
-
-def do(expr):
-  expr.evaluate()
-  print(';')
 
 stdout = foreignVar('stdout', Pointer(FILE))
 fputs = foreignFunc('fputs', Void, [Pointer(FILE), Pointer(Char)])
