@@ -205,8 +205,10 @@ def function(type, *params):
     name = allocFunctionName()
 
     namedParams = list(('x' + str(i), type) for i, type in enumerate(params))
+    print('')
     emitFunctionSignature(name, type, namedParams)
     print(' {')
+    emitFunctionContent(content, namedParams)
     print('}')
     return getCallFunction(type, name, params)
   return decorate
