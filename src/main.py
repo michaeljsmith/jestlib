@@ -104,6 +104,9 @@ def memoized(fn):
       return result
   return evaluate
 
+def emitMemberDeclaration(type, name):
+  print(type.declaration(name) + ';')
+
 def emitFunctionSignature(name, type, namedParams):
   print(type.name + ' ' + name + '(' +
       ', '.join(type.declaration(name) for name, type in namedParams) +
@@ -112,6 +115,11 @@ def emitFunctionSignature(name, type, namedParams):
 def emitAssignment(dst, src):
   print(dst + ' = ' + src + ';')
 
+def emitFunctionCall(head, args):
+  print(head + '(' +
+      ', '.join(arg.name for arg in args) +
+      ')', end='')
+
 def declareLocalInitialized(type, content):
   localName = allocLocalName()
   print(type.declare(localName) + ' = ', end='')
@@ -119,24 +127,31 @@ def declareLocalInitialized(type, content):
   return localName
 
 def checkArgs(params, args):
-  if len(params) != len(args): raise Exception()
+  if len(params) != len(args):
+    print(params)
+    print(args)
+    raise Exception()
   for param, arg in zip(params, args):
     if param is not arg.type: raise Exception()
 
-def callFunction(head, type, params, args):
+def callFunction(target, head, type, params, args):
   checkArgs(params, args)
-  local = declareLocalInitialized(type,
-      lambda: emitFunctionCall(head, args))
-  return type(local)
+  if type is Void:
+    emitFunctionCall(head, args)
+    print(';')
+  else:
+    local = declareLocalInitialized(type,
+        lambda: emitFunctionCall(head, args))
+    target(type(local))
 
 def getCallFunction(name, type, params):
-  return lambda args: callFunction(name, type, params, args)
+  return lambda target, args: callFunction(target, name, type, params, args)
 
 def getCallMethodGenerator(name, type, params):
   def generateCall(instanceName):
-    def call(*args):
+    def call(target, *args):
       head = instanceName + '.' + name
-      callFunction(head, type, params, args)
+      callFunction(target, head, type, params, args)
     return call
   return generateCall
 
@@ -195,6 +210,7 @@ def class_(content):
 
   def instantiate():
     memberName = allocMemberName()
+    emitMemberDeclaration(ClassImpl, memberName)
     return generate(memberName)
 
   return instantiate
@@ -242,21 +258,9 @@ def function(type, *params):
 def evaluate():
   asdf
 
-class BaseMethod(object):
-  def __init__(self, params):
-    self.params = params
-
-  def emitMethods(self):
-    generateCallFn = self.emitMethod()
-
-    def wrap(memberName):
-      return type(self)(generateCallFn(memberName))
-    return wrap
-
 def VoidMethod(*params):
-  class VoidMethod(BaseMethod):
+  class VoidMethod(object):
     def __init__(self, fn):
-      BaseMethod.__init__(self, params)
       self.fn = fn
 
     @property
@@ -265,20 +269,23 @@ def VoidMethod(*params):
 
     def __call__(self, *args):
       checkArgs(params, args)
-      self.fn(*args)
+      self.fn(lambda _: None, *args)
 
-    def emitMethod(self):
-      @method(self.type, *self.params)
+    def emitMethods(self):
+      @method(Void, *params)
       def call(*args):
         self(*args)
-      return call
+      generateCallFn = call
+
+      def wrap(memberName):
+        return VoidMethod(generateCallFn(memberName))
+      return wrap
 
   return VoidMethod
 
 def TypedMethod(type, *params):
-  class TypedMethod(BaseMethod):
+  class TypedMethod(object):
     def __init__(self, fn):
-      BaseMethod.__init__(self, params)
       self.fn = fn
 
     @property
@@ -287,13 +294,17 @@ def TypedMethod(type, *params):
 
     def __call__(self, target, *args):
       checkArgs(args, params)
-      self.fn(target)
+      self.fn(target, *args)
 
-    def emitMethod(self):
-      @method(type, *params)
-      def call():
-        self(return_(type))
-      return call
+    def emitMethods(self):
+      @method(Void, *params)
+      def call(*args):
+        self(return_(type), *args)
+      generateCallFn = call
+
+      def wrap(memberName):
+        return TypedMethod(generateCallFn(memberName))
+      return wrap
 
   return TypedMethod
 
@@ -323,10 +334,10 @@ def emitMethods(inst):
 def primitive(type):
   def generate():
     memberName = allocMemberName()
-    print(type.declaration(memberName) + ';')
+    emitMemberDeclaration(type, memberName)
 
     @Method(Void, type)
-    def set(value):
+    def set(target, value):
       emitAssignment(memberName, value.name)
 
     @Method(type)
@@ -361,13 +372,6 @@ fputs = foreignFunc('fputs', Void, Pointer(StdFile), Pointer(Char))
 Customer = record(
   firstName = primitive(String),
   secondName = primitive(String))
-
-#@function(Void, Customer.cls)
-#def printToCanvas(customer):
-#  evaluate(fputs(stdout, customer.firstName))
-#  evaluate(fputs(stdout, stringLiteral(' ')))
-#  evaluate(fputs(stdout, customer.secondName))
-#  evaluate(fputs(stdout, stringLiteral('\\n')))
 
 Model = record(
   customer = Customer)
