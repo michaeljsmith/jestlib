@@ -267,22 +267,19 @@ def primitive(type):
   return generate
 
 def composite(content):
-  generators = {}
+  class Composite(object): pass
 
   @class_
   def content():
-    content(generators)
+    content(Composite)
 
-  def generate():
-    return Object(**dict((name, generator(parentVar))
-      for name, generator in generators.items()))
-  return generate
+  return Composite
 
 def record(**elements):
   @composite
-  def RecordImpl(generators):
+  def RecordImpl(cls):
     for name, gen in elements.items():
-      generators[name] = emitMethods(gen())
+      cls.name = emitMethods(gen())
 
   return RecordImpl
 
