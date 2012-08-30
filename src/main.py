@@ -201,25 +201,32 @@ def VoidMethod(*params):
 
     def emit(self):
       @method(Void, *params)
-      def setter(val):
+      def call(val):
         self(val)
 
   return VoidMethod
 
-def GetMethod(type):
-  class GetMethod(object):
-    def __init__(self, varName):
-      self.varName = varName
+def TypedMethod(type, *params):
+  class TypedMethod(object):
+    def __init__(self, fn):
+      self.fn = fn
 
-    def __call__(self, target):
-      target(type(self.varName))
+    def __call__(self, target, *args):
+      checkArgs(args, params)
+      self.fn(target)
      
     def emit(self):
-      @method(type)
-      def getter():
+      @method(type, *params)
+      def call():
         self(return_(type))
 
-  return GetMethod
+  return TypedMethod
+
+def Method(type, *params):
+  if type is Void:
+    return VoidMethod(*params)
+  else:
+    return TypedMethod(type, *params)
 
 class Object(object):
   def __init__(self, **elements):
@@ -236,10 +243,16 @@ def primitive(type):
   def generate():
     memberName = allocMemberName()
     print(type.declaration(memberName) + ';')
-    return Object(
-        set=VoidMethod(type)(lambda value:
-          emitAssignment(memberName, value.name)),
-        get=GetMethod(type)(memberName))
+
+    @Method(Void, type)
+    def set(value):
+      emitAssignment(memberName, value.name)
+
+    @Method(type)
+    def get(target):
+      target(type(memberName))
+
+    return Object(set=set, get=get)
   return generate
 
 def Composite(content):
