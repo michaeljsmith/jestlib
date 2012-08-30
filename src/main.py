@@ -190,6 +190,17 @@ def foreignFunc(name, type, *params):
   print(';')
   return getCallFunction(type, name, params)
 
+def function(type, *params):
+  def decorate(content):
+    name = allocFunctionName()
+
+    namedParams = list(('x' + str(i), type) for i, type in enumerate(params))
+    emitFunctionSignature(name, type, namedParams)
+    print(' {')
+    print('}')
+    return getCallFunction(type, name, params)
+  return decorate
+
 def VoidMethod(*params):
   class VoidMethod(object):
     def __init__(self, fn):
@@ -255,7 +266,7 @@ def primitive(type):
     return Object(set=set, get=get)
   return generate
 
-def Composite(content):
+def composite(content):
   generators = {}
 
   @class_
@@ -268,7 +279,7 @@ def Composite(content):
   return generate
 
 def record(**elements):
-  @Composite
+  @composite
   def RecordImpl(generators):
     for name, gen in elements.items():
       generators[name] = emitMethods(gen())
