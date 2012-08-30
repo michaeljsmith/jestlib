@@ -91,6 +91,11 @@ def emitFunctionSignature(name, type, namedParams):
 def emitAssignment(dst, src):
   print(dst + ' = ' + src + ';')
 
+def checkArgs(params, args):
+  if len(params) != len(args): raise Exception()
+  for param, arg in zip(params, args):
+    if param is not arg.type: raise Exception()
+
 def callFunction(head, type, params, args):
   checkArgs(params, args)
   local = declareLocalInitialized(type,
@@ -115,6 +120,10 @@ class Type(object):
 
   def __init__(self, name):
     self.name = name
+
+  @property
+  def type(self):
+    return type(self)
 
   @classmethod
   def declaration(cls, name):
@@ -181,20 +190,21 @@ def foreignFunc(name, type, *params):
   print(';')
   return getCallFunction(type, name, params)
 
-def SetMethod(type):
-  class SetMethod(object):
-    def __init__(self, varName):
-      self.varName = varName
+def VoidMethod(*params):
+  class VoidMethod(object):
+    def __init__(self, fn):
+      self.fn = fn
 
-    def __call__(self, value):
-      emitAssignment(self.varName, value.name)
+    def __call__(self, *args):
+      checkArgs(params, args)
+      self.fn(*args)
 
     def emit(self):
-      @method(Void, type)
+      @method(Void, *params)
       def setter(val):
         self(val)
 
-  return SetMethod
+  return VoidMethod
 
 def GetMethod(type):
   class GetMethod(object):
@@ -222,12 +232,13 @@ class Object(object):
 def emitMethods(inst):
   return inst.emitMethods()
 
-def Primitive(type):
+def primitive(type):
   def generate():
     memberName = allocMemberName()
     print(type.declaration(memberName) + ';')
     return Object(
-        set=SetMethod(type)(memberName),
+        set=VoidMethod(type)(lambda value:
+          emitAssignment(memberName, value.name)),
         get=GetMethod(type)(memberName))
   return generate
 
@@ -243,7 +254,7 @@ def Composite(content):
       for name, generator in generators.items()))
   return generate
 
-def Record(**elements):
+def record(**elements):
   @Composite
   def RecordImpl(generators):
     for name, gen in elements.items():
@@ -257,9 +268,9 @@ class StdFile(object):
 stdout = foreignVar('stdout', Pointer(StdFile))
 fputs = foreignFunc('fputs', Void, Pointer(StdFile), Pointer(Char))
 
-Customer = Record(
-  firstName = Primitive(String),
-  secondName = Primitive(String))
+Customer = record(
+  firstName = primitive(String),
+  secondName = primitive(String))
 
 @function(Void, Customer)
 def printToCanvas(customer):
