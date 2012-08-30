@@ -151,6 +151,11 @@ class Char(Type):
 class String(Type):
   name = 'string'
 
+class Class():
+  def __init__(self, cls, generate):
+    self.cls = cls
+    self.generate = generate
+
 def class_(content):
   className = allocClassName()
 
@@ -158,10 +163,15 @@ def class_(content):
 
     print('')
     print('class ' + className + ' {')
-    obj = content()
+    generate = content()
     print('};')
 
-  return obj
+  class ClassImpl(Type):
+    name = className
+
+  cls = Class(ClassImpl, generate)
+
+  return cls
 
 def emitFunctionContent(content, namedParams):
   content(*list(type(name) for name, type in namedParams))
@@ -210,7 +220,7 @@ def VoidMethod(*params):
       checkArgs(params, args)
       self.fn(*args)
 
-    def emit(self):
+    def emitMethods(self):
       @method(Void, *params)
       def call(val):
         self(val)
@@ -226,7 +236,7 @@ def TypedMethod(type, *params):
       checkArgs(args, params)
       self.fn(target)
      
-    def emit(self):
+    def emitMethods(self):
       @method(type, *params)
       def call():
         self(return_(type))
@@ -245,7 +255,7 @@ class Object(object):
 
   def emitMethods(self):
     for name, element in vars(self).items():
-      element.emit()
+      element.emitMethods()
 
 def emitMethods(inst):
   return inst.emitMethods()
@@ -267,21 +277,20 @@ def primitive(type):
   return generate
 
 def composite(content):
-  class Composite(object): pass
-
   @class_
-  def content():
-    content(Composite)
+  def compositeImpl():
+    obj = content()
+    generator = emitMethods(obj)
+    return generator
 
-  return Composite
+  return compositeImpl
 
 def record(**elements):
   @composite
-  def RecordImpl(cls):
-    for name, gen in elements.items():
-      cls.name = emitMethods(gen())
+  def recordImpl():
+    return Object(**dict((name, gen()) for name, gen in elements.items()))
 
-  return RecordImpl
+  return recordImpl
 
 class StdFile(object):
   name = 'FILE'
@@ -293,7 +302,7 @@ Customer = record(
   firstName = primitive(String),
   secondName = primitive(String))
 
-@function(Void, Customer)
+@function(Void, Customer.cls)
 def printToCanvas(customer):
   do(fputs(stdout, customer.firstName.c_str()))
   do(fputs(stdout, stringLiteral(' ').c_str()))
