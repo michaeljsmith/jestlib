@@ -147,15 +147,12 @@ def class_(content):
 
   with outputtingDefLock, memberNamesScope, methodNamesScope:
 
-    class ClassInstance(Type):
-      pass
-
     print('')
     print('class ' + className + ' {')
-    content(ClassInstance)
+    obj = content()
     print('};')
 
-  return ClassInstance
+  return obj
 
 def emitFunctionContent(content, namedParams):
   content(*list(type(name) for name, type in namedParams))
@@ -184,72 +181,73 @@ def foreignFunc(name, type, *params):
   print(';')
   return getCallFunction(type, name, params)
 
-def instance(type):
-  memberName = allocMemberName()
-  print(type.declaration(memberName) + ';')
-  return type.referVar(memberName)
+def SetMethod(type):
+  class SetMethod(object):
+    def __init__(self, varName):
+      self.varName = varName
+
+    def __call__(self, value):
+      emitAssignment(self.varName, value.name)
+
+    def emit(self):
+      @method(Void, type)
+      def setter(val):
+        self(val)
+
+  return SetMethod
+
+def GetMethod(type):
+  class GetMethod(object):
+    def __init__(self, varName):
+      self.varName = varName
+
+    def __call__(self, target):
+      target(type(self.varName))
+     
+    def emit(self):
+      @method(type)
+      def getter():
+        self(return_(type))
+
+  return GetMethod
 
 class Object(object):
-  pass
+  def __init__(self, **elements):
+    vars(self).update(elements)
+
+  def emitMethods(self):
+    for name, element in vars(self).items():
+      element.emit()
 
 def emitMethods(inst):
   return inst.emitMethods()
 
 def Primitive(type):
-
-  class Primitive(Object):
-    def __init__(self, set, get):
-      self.set = set
-      self.get = get
-
-    def emitMethods(self):
-      @method(Void, type)
-      def setter(val):
-        self.set(val)
-    
-      @method(type)
-      def getter():
-        self.get(return_(type))
-
-      def wrapInstance(getParent):
-        def set(val):
-          getParent(lambda parent: setter(parent, val))
-        def get(target):
-          def getChildAndCallMethod(parent):
-            local = declareLocalInitialized(type, lambda: getter(parent))
-            target(local)
-          getParent(getChildAndCallMethod)
-
-    @staticmethod
-    def declaration(name):
-      return type.declaration(name)
-
-    @classmethod
-    def referVar(cls, varName):
-      def set(value):
-        emitAssignment(varName, value.name)
-      def get(target):
-        target(type(varName))
-      return cls(set, get)
-
-  return Primitive
+  def generate():
+    memberName = allocMemberName()
+    print(type.declaration(memberName) + ';')
+    return Object(
+        set=SetMethod(type)(memberName),
+        get=GetMethod(type)(memberName))
+  return generate
 
 def Composite(content):
-  class CompositeImpl(Object):
-    pass
+  generators = {}
 
   @class_
-  def content(cls):
-    CompositeImpl.cls = cls
-    content(CompositeImpl)
+  def content():
+    content(generators)
 
-  return CompositeImpl
+  def generate():
+    return Object(**dict((name, generator(parentVar))
+      for name, generator in generators.items()))
+  return generate
 
 def Record(**elements):
   @Composite
-  def RecordImpl(cls):
-    for name, type in elements.items():
-      setattr(cls, name, property(emitMethods(instance(type))))
+  def RecordImpl(generators):
+    for name, gen in elements.items():
+      generators[name] = emitMethods(gen())
 
   return RecordImpl
 
